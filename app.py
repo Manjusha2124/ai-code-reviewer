@@ -1,6 +1,7 @@
-﻿import streamlit as st
+import streamlit as st
 import textwrap
 from datetime import datetime
+import re
 
 # =========================
 # Page Configuration
@@ -56,7 +57,7 @@ h1, h2, h3 {
 # App Title
 # =========================
 st.title("💻 AI Code Reviewer")
-st.caption("Analyze and review your code instantly")
+st.caption("Analyze, detect errors, and optimize your code instantly")
 
 # =========================
 # Sample Code Library
@@ -64,84 +65,36 @@ st.caption("Analyze and review your code instantly")
 sample_code = {
     "Python": {
         "Simple Function": """def greet(name):
-    return f\"Hello, {name}!\"\n
-print(greet('World'))""",
-        "Loop Example": """numbers = [1, 2, 3, 4, 5]
-squared = [n**2 for n in numbers]
-print(squared)""",
-        "Class Template": """class Calculator:
-    def __init__(self):
-        self.total = 0
+    return f"Hello, {name}!"
 
-    def add(self, value):
-        self.total += value
-        return self.total
-
-calc = Calculator()
-print(calc.add(10))"""
+print(greet('World'))"""
     },
+
     "Java": {
         "Simple Function": """public class HelloWorld {
     public static void main(String[] args) {
-        System.out.println(\"Hello, World!\");
-    }
-}""",
-        "Loop Example": """for (int i = 0; i < 5; i++) {
-    System.out.println(i);
-}""",
-        "Class Template": """public class Calculator {
-    private int total = 0;
-
-    public int add(int value) {
-        total += value;
-        return total;
+        System.out.println("Hello World");
     }
 }"""
     },
+
     "C++": {
         "Simple Function": """#include <iostream>
 
+using namespace std;
+
 int main() {
-    std::cout << \"Hello, C++!\" << std::endl;
+    cout << "Hello";
     return 0;
-}""",
-        "Loop Example": """for (int i = 0; i < 5; i++) {
-    std::cout << i << std::endl;
-}""",
-        "Class Template": """#include <iostream>
-
-class Calculator {
-public:
-    int total = 0;
-
-    int add(int value) {
-        total += value;
-        return total;
-    }
-};"""
+}"""
     },
+
     "JavaScript": {
         "Simple Function": """function greet(name) {
-    return `Hello, ${name}!`;
+    return "Hello " + name;
 }
 
-console.log(greet('World'));""",
-        "Loop Example": """const numbers = [1, 2, 3, 4, 5];
-const squared = numbers.map(n => n * n);
-console.log(squared);""",
-        "Class Template": """class Calculator {
-    constructor() {
-        this.total = 0;
-    }
-
-    add(value) {
-        this.total += value;
-        return this.total;
-    }
-}
-
-const calc = new Calculator();
-console.log(calc.add(10));"""
+console.log(greet("World"));"""
     }
 }
 
@@ -152,138 +105,202 @@ language_map = {
     "JavaScript": "javascript"
 }
 
-dangerous_patterns = {
-    "Python": ["eval(", "exec(", "pickle.loads", "subprocess.Popen"],
-    "Java": ["Runtime.getRuntime", "exec(", "System.exit"],
-    "C++": ["strcpy(", "sprintf(", "gets(", "system("],
-    "JavaScript": ["eval(", "document.write(", "innerHTML", "setTimeout("]
-}
-
-comment_tokens = {
-    "Python": ["#"],
-    "Java": ["//", "/*"],
-    "C++": ["//", "/*"],
-    "JavaScript": ["//", "/*"]
-}
-
 # =========================
-# Helpers
+# Error Detection
 # =========================
-def count_comments(code: str, language: str) -> int:
-    tokens = comment_tokens.get(language, ["#"])
-    comments = 0
-    for line in code.splitlines():
-        if any(token in line.strip() for token in tokens):
-            comments += 1
-    return comments
+def find_errors(code, language):
 
+    errors = []
 
-def detect_issues(code: str, language: str) -> tuple[list[str], dict]:
     lines = code.splitlines()
+
+    # Java / C++ / JavaScript Errors
+    if language in ["Java", "C++", "JavaScript"]:
+
+        for i, line in enumerate(lines):
+
+            stripped = line.strip()
+
+            # Missing semicolon
+            if (
+                stripped
+                and not stripped.endswith(";")
+                and not stripped.endswith("{")
+                and not stripped.endswith("}")
+                and "if" not in stripped
+                and "for" not in stripped
+                and "while" not in stripped
+                and "class " not in stripped
+                and not stripped.startswith("//")
+            ):
+                errors.append(
+                    f"Possible missing semicolon at line {i+1}"
+                )
+
+        # Bracket count
+        if code.count("{") != code.count("}"):
+            errors.append("Mismatched curly braces detected")
+
+        if code.count("(") != code.count(")"):
+            errors.append("Mismatched parentheses detected")
+
+    # Python Errors
+    elif language == "Python":
+
+        try:
+            compile(code, "<string>", "exec")
+        except SyntaxError as e:
+            errors.append(f"Syntax Error at line {e.lineno}: {e.msg}")
+
+    return errors
+
+# =========================
+# Complexity Analyzer
+# =========================
+def analyze_complexity(code: str, language: str) -> dict:
+
+    lines = code.splitlines()
+
+    loop_count = 0
+    nested_loop = False
+    recursion = False
+
+    for line in lines:
+
+        stripped = line.strip().lower()
+
+        # Detect loops
+        if (
+            stripped.startswith("for ")
+            or stripped.startswith("while ")
+            or " for(" in stripped
+            or " while(" in stripped
+        ):
+            loop_count += 1
+
+        # Detect recursion
+        if language == "Python":
+
+            if "def " in stripped:
+
+                func_name = stripped.split("def ")[1].split("(")[0]
+
+                if func_name + "(" in code and code.count(func_name + "(") > 1:
+                    recursion = True
+
+        elif language in ["Java", "C++", "JavaScript"]:
+
+            if "(" in stripped and ")" in stripped and "class " not in stripped:
+
+                parts = stripped.split("(")[0].split()
+
+                if len(parts) > 0:
+
+                    func_name = parts[-1]
+
+                    if code.count(func_name + "(") > 1:
+                        recursion = True
+
+    # Nested loops
+    if loop_count >= 2:
+        nested_loop = True
+
+    # Time Complexity
+    if recursion:
+        time_complexity = "O(2^n)"
+    elif nested_loop:
+        time_complexity = "O(n²)"
+    elif loop_count == 1:
+        time_complexity = "O(n)"
+    else:
+        time_complexity = "O(1)"
+
+    # Space Complexity
+    if recursion:
+        space_complexity = "O(n)"
+    elif (
+        "[]" in code
+        or "ArrayList" in code
+        or "vector" in code
+        or "HashMap" in code
+    ):
+        space_complexity = "O(n)"
+    else:
+        space_complexity = "O(1)"
+
+    return {
+        "time": time_complexity,
+        "space": space_complexity
+    }
+
+# =========================
+# Detect Issues
+# =========================
+def detect_issues(code, language):
+
+    lines = code.splitlines()
+
     metrics = {
         "lines": len(lines),
         "characters": len(code),
-        "comments": count_comments(code, language),
-        "long_lines": sum(1 for line in lines if len(line) > 100),
-        "todo_count": sum(line.lower().count("todo") + line.lower().count("fixme") for line in lines),
-        "tabs": "\t" in code,
-        "dangerous": any(pattern in code for pattern in dangerous_patterns.get(language, []))
+        "comments": sum(
+            1 for line in lines
+            if line.strip().startswith("#")
+            or line.strip().startswith("//")
+        )
     }
 
     issues = []
-    if metrics["todo_count"]:
-        issues.append(f"Found {metrics['todo_count']} TODO/FIXME comment(s).")
-    if metrics["long_lines"]:
-        issues.append(f"{metrics['long_lines']} line(s) exceed 100 characters.")
-    if metrics["tabs"]:
-        issues.append("Tab characters are used; prefer spaces for consistent indentation.")
-    if metrics["dangerous"]:
-        issues.append("Potentially unsafe function or pattern detected.")
-    if metrics["comments"] == 0 and metrics["lines"] > 10:
-        issues.append("No comments detected; add documentation for readability.")
 
-    if language == "JavaScript" and "var " in code:
-        issues.append("Use let/const instead of var for modern JavaScript.")
-    if language == "Python" and "print(" in code and "def " in code and metrics["lines"] > 20:
-        issues.append("Consider using logging instead of print for larger Python projects.")
-    if language == "C++" and "using namespace std" in code:
-        issues.append("Avoid 'using namespace std' in headers or shared code.")
+    if metrics["comments"] == 0:
+        issues.append("No comments found.")
+
+    if len(code) > 1000:
+        issues.append("Large code block detected.")
 
     return issues, metrics
 
+# =========================
+# Score Calculation
+# =========================
+def calculate_score(metrics):
 
-def calculate_score(metrics: dict, difficulty: str) -> int:
     score = 10
-    score -= min(3, metrics["todo_count"])
-    score -= min(2, metrics["long_lines"] / 5)
-    score -= 1 if metrics["tabs"] else 0
-    score -= 2 if metrics["dangerous"] else 0
 
-    comment_ratio = metrics["comments"] / max(metrics["lines"], 1)
-    if metrics["lines"] > 15 and comment_ratio < 0.08:
+    if metrics["comments"] == 0:
         score -= 1
 
-    score = max(3, min(10, round(score)))
-    return score
+    return max(score, 1)
 
+# =========================
+# Build Review
+# =========================
+def build_review(language, difficulty, review_mode, metrics, issues):
 
-def get_quality_label(score: int) -> str:
-    if score >= 9:
-        return "Excellent"
-    if score >= 7:
-        return "Good"
-    if score >= 5:
-        return "Average"
-    return "Needs Improvement"
+    score = calculate_score(metrics)
 
-
-def build_review(language: str, difficulty: str, review_mode: str, metrics: dict, issues: list[str]) -> str:
-    score = calculate_score(metrics, difficulty)
-    label = get_quality_label(score)
-
-    improvements = [
-        "Use meaningful variable and function names",
-        "Keep functions small and focused",
-        "Add comments or docstrings where helpful",
-        "Refactor repeated code into reusable helpers",
-    ]
-
-    if review_mode == "Performance":
-        improvements.append("Check for expensive loops and repeated calculations.")
-    elif review_mode == "Security":
-        improvements.append("Validate user input and sanitize external data.")
-    elif review_mode == "Style & Readability":
-        improvements.append("Use consistent spacing and naming conventions.")
-
-    suggestions = "\n".join(f"- {item}" for item in improvements)
-    issue_section = "\n".join(f"- {issue}" for issue in issues) if issues else "No major issues detected."
+    issue_text = "\n".join([f"- {i}" for i in issues])
 
     return f"""
-### ✅ AI Code Review Report
+## ✅ Review Summary
 
-- Language Selected: {language}
-- Difficulty Level: {difficulty}
+- Language: {language}
+- Difficulty: {difficulty}
 - Review Focus: {review_mode}
-- Quality Label: **{label}**
 
 ### 📊 Metrics
 - Total Lines: {metrics['lines']}
-- Total Characters: {metrics['characters']}
-- Commented Lines: {metrics['comments']}
-- Long Lines: {metrics['long_lines']}
-- TODO/FIXME Count: {metrics['todo_count']}
+- Characters: {metrics['characters']}
+- Comments: {metrics['comments']}
 
-### ⭐ Code Quality Score
+### ⭐ Score
 {score}/10
 
-### 🔎 Detected Issues
-{issue_section}
-
-### 🛠 Recommendations
-{suggestions}
+### 🔎 Issues
+{issue_text if issue_text else "No issues detected"}
 
 ### 🚀 Overall Feedback
-This review gives you a quick snapshot of maintainability, readability, and style. Use the detailed issues above to improve your code before the next review.
+Your code review completed successfully.
 """
 
 # =========================
@@ -307,14 +324,16 @@ review_mode = st.sidebar.selectbox(
 )
 
 sample_options = ["None"] + list(sample_code[language].keys())
-sample_choice = st.sidebar.selectbox("Use Sample Code", sample_options)
+
+sample_choice = st.sidebar.selectbox(
+    "Use Sample Code",
+    sample_options
+)
 
 uploaded_file = st.sidebar.file_uploader(
     "Upload Code File",
     type=["py", "java", "cpp", "js", "txt"]
 )
-
-verbose = st.sidebar.checkbox("Verbose Analysis", value=False)
 
 # =========================
 # Main Input
@@ -322,80 +341,125 @@ verbose = st.sidebar.checkbox("Verbose Analysis", value=False)
 st.subheader("📌 Paste Your Code")
 
 code = ""
-source_note = ""
 
 if uploaded_file is not None:
+
     raw = uploaded_file.read()
+
     try:
         code = raw.decode("utf-8")
-    except AttributeError:
-        code = raw
-    except UnicodeDecodeError:
-        code = raw.decode("utf-8", errors="replace")
-    source_note = f"Analyzing uploaded file: **{uploaded_file.name}**"
+    except:
+        code = str(raw)
+
 elif sample_choice != "None":
+
     code = sample_code[language][sample_choice]
-    source_note = f"Loaded sample: **{sample_choice}**"
+
 else:
+
     code = st.text_area(
-        "Enter Code Here",
-        height=320,
+        "Code",
+        height=350,
         placeholder="Paste your code here..."
     )
-
-if source_note:
-    st.write(source_note)
 
 # =========================
 # Analyze Button
 # =========================
 if st.button("🔍 Review Code"):
-    if not code or not code.strip():
-        st.warning("Please paste some code or upload a file first.")
+
+    if not code.strip():
+
+        st.warning("Please paste some code.")
+
     else:
+
+        # Error Detection
+        errors = find_errors(code, language)
+
+        if errors:
+
+            st.subheader("❌ Syntax Errors")
+
+            for error in errors:
+                st.error(error)
+
+        # Review
         issues, metrics = detect_issues(code, language)
-        review = build_review(language, difficulty, review_mode, metrics, issues)
+
+        review = build_review(
+            language,
+            difficulty,
+            review_mode,
+            metrics,
+            issues
+        )
 
         col1, col2 = st.columns((2, 3))
 
+        # =========================
+        # LEFT SIDE
+        # =========================
         with col1:
-            st.subheader("🧾 Code Preview")
-            st.code(code, language=language_map[language])
+
+            st.subheader("🧾 Original Code")
+
+            st.code(
+                code,
+                language=language_map[language]
+            )
+
             st.markdown("---")
-            st.subheader("📌 Quick Metrics")
+
+            st.subheader("📊 Metrics")
+
             st.metric("Lines", metrics["lines"])
             st.metric("Characters", metrics["characters"])
             st.metric("Comments", metrics["comments"])
 
+            # Complexity Analysis
+            complexity = analyze_complexity(code, language)
+
+            st.markdown("---")
+
+            st.subheader("📊 Complexity Analysis")
+
+            st.metric(
+                "Time Complexity",
+                complexity["time"]
+            )
+
+            st.metric(
+                "Space Complexity",
+                complexity["space"]
+            )
+
+        # =========================
+        # RIGHT SIDE
+        # =========================
         with col2:
-            st.subheader("✅ Review Summary")
+
             st.markdown(review)
 
-            if verbose and issues:
-                with st.expander("Detailed Issues"):
-                    for issue in issues:
-                        st.write(f"- {issue}")
-
             st.download_button(
-                label="⬇ Download Full Report",
+                label="⬇ Download Report",
                 data=review,
-                file_name=f"code_review_report_{datetime.now():%Y%m%d_%H%M%S}.md",
-                mime="text/markdown"
+                file_name=f"review_{datetime.now():%Y%m%d_%H%M%S}.txt",
+                mime="text/plain"
             )
 
             st.download_button(
                 label="⬇ Download Code",
                 data=code,
-                file_name=f"code_snippet_{datetime.now():%Y%m%d_%H%M%S}.{uploaded_file.name.split('.')[-1] if uploaded_file is not None else language_map[language]}",
+                file_name=f"code_{datetime.now():%Y%m%d_%H%M%S}.txt",
                 mime="text/plain"
             )
-
-        if verbose:
-            with st.expander("⚙️ Analysis Details"):
-                st.json(metrics)
 
 # =========================
 # Footer
 # =========================
 st.markdown("---")
-st.caption("Built with Streamlit 🚀 | Enhanced with sample code, file upload, and richer analysis.")
+
+st.caption(
+    "Built with Streamlit 🚀 | AI Code Reviewer"
+)
